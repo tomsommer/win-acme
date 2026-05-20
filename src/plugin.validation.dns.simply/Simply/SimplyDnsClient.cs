@@ -58,6 +58,7 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
         private async Task<List<Product>> GetProductsAsync()
         {
             using var response = await _httpClient.GetAsync(_baseUrl + "/my/products/");
+            await EnsureSuccessOrThrowAsync(response, "GET /my/products/");
             await using var stream = await response.Content.ReadAsStreamAsync();
             var products = await JsonSerializer.DeserializeAsync<ProductList>(stream);
             if (products == null || products.Products == null)
@@ -71,21 +72,19 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
         {
             using var content = new StringContent(JsonSerializer.Serialize(record), Encoding.UTF8, "application/json");
             using var response = await _httpClient.PostAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/", content);
-            var responseBody = await response.Content.ReadAsStringAsync();
-            _ = response.EnsureSuccessStatusCode();
+            await EnsureSuccessOrThrowAsync(response, "POST /dns/records/");
         }
 
         private async Task DeleteRecordAsync(string objectId, int recordId)
         {
             using var response = await _httpClient.DeleteAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/{recordId}/");
-            var responseBody = await response.Content.ReadAsStringAsync();
-            _ = response.EnsureSuccessStatusCode();
+            await EnsureSuccessOrThrowAsync(response, $"DELETE /dns/records/{recordId}/");
         }
 
         private async Task<List<DnsRecord>> GetRecordsAsync(string objectId)
         {
             using var response = await _httpClient.GetAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/");
-            _ = response.EnsureSuccessStatusCode();
+            await EnsureSuccessOrThrowAsync(response, "GET /dns/records/");
             await using var stream = await response.Content.ReadAsStreamAsync();
             var records = await JsonSerializer.DeserializeAsync<DnsRecordList>(stream);
             if (records == null || records.Records == null)
@@ -93,6 +92,44 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
                 throw new InvalidOperationException();
             }
             return records.Records;
+        }
+
+        private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string operation)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+            var body = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException(
+                $"Simply.com API error ({operation}, HTTP {(int)response.StatusCode}): {ExtractErrorMessage(body)}");
+        }
+
+        private static string ExtractErrorMessage(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return "no response body";
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    if (doc.RootElement.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.String)
+                    {
+                        return err.GetString() ?? body;
+                    }
+                    if (doc.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String)
+                    {
+                        return msg.GetString() ?? body;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+            }
+            return body;
         }
 
         private static string EncodeBasicAuth(string account, string apiKey)
