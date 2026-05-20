@@ -38,21 +38,30 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
             });
         }
 
-        public async Task DeleteRecordAsync(string objectId, string domain, string value)
+        public async Task DeleteRecordAsync(Product product, string domain, string value)
         {
-            var products = await GetProductsAsync();
-            var product = products.FirstOrDefault(x => x.Object == objectId);
-            if (product == null)
+            if (string.IsNullOrEmpty(product.Object))
             {
-                throw new Exception($"Unable to find product with object id {objectId}.");
+                throw new InvalidOperationException("Product has no object id");
             }
-            var records = await GetRecordsAsync(objectId);
-            var record = records.SingleOrDefault(x => x.Type == "TXT" && $"{x.Name}.{product.Domain?.NameIdn ?? "unknown"}" == domain && x.Data == value);
-            if (record is null)
+            var zoneName = product.Domain?.NameIdn ?? product.Domain?.Name;
+            if (string.IsNullOrEmpty(zoneName))
             {
-                throw new Exception($"The TXT record {domain} that should be deleted does not exist at Simply.");
+                throw new InvalidOperationException($"Product {product.Object} has no domain name");
             }
-            await DeleteRecordAsync(objectId, record.RecordId);
+
+            var records = await GetRecordsAsync(product.Object);
+            var matching = records
+                .Where(x => x.Type == "TXT" && $"{x.Name}.{zoneName}" == domain && x.Data == value)
+                .ToList();
+
+            // ACME cleanup must be idempotent. If a previous run already
+            // removed the record (or the create step failed before adding
+            // it) there is nothing to delete and that is a success.
+            foreach (var record in matching)
+            {
+                await DeleteRecordAsync(product.Object, record.RecordId);
+            }
         }
 
         private async Task<List<Product>> GetProductsAsync()
