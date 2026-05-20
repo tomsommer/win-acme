@@ -67,7 +67,7 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
         private async Task<List<Product>> GetProductsAsync()
         {
             using var response = await _httpClient.GetAsync(_baseUrl + "/my/products/");
-            EnsureSuccessOrThrow(response, "GET /my/products/");
+            await EnsureSuccessOrThrowAsync(response, "GET /my/products/");
             await using var stream = await response.Content.ReadAsStreamAsync();
             var products = await JsonSerializer.DeserializeAsync<ProductList>(stream);
             if (products == null || products.Products == null)
@@ -81,19 +81,19 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
         {
             using var content = new StringContent(JsonSerializer.Serialize(record), Encoding.UTF8, "application/json");
             using var response = await _httpClient.PostAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/", content);
-            EnsureSuccessOrThrow(response, "POST /dns/records/");
+            await EnsureSuccessOrThrowAsync(response, "POST /dns/records/");
         }
 
         private async Task DeleteRecordAsync(string objectId, int recordId)
         {
             using var response = await _httpClient.DeleteAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/{recordId}/");
-            EnsureSuccessOrThrow(response, $"DELETE /dns/records/{recordId}/");
+            await EnsureSuccessOrThrowAsync(response, $"DELETE /dns/records/{recordId}/");
         }
 
         private async Task<List<DnsRecord>> GetRecordsAsync(string objectId)
         {
             using var response = await _httpClient.GetAsync(_baseUrl + $"/my/products/{WebUtility.UrlEncode(objectId)}/dns/records/");
-            EnsureSuccessOrThrow(response, "GET /dns/records/");
+            await EnsureSuccessOrThrowAsync(response, "GET /dns/records/");
             await using var stream = await response.Content.ReadAsStreamAsync();
             var records = await JsonSerializer.DeserializeAsync<DnsRecordList>(stream);
             if (records == null || records.Records == null)
@@ -103,14 +103,49 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins.Simply
             return records.Records;
         }
 
-        private static void EnsureSuccessOrThrow(HttpResponseMessage response, string operation)
+        private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string operation)
         {
             if (response.IsSuccessStatusCode)
             {
                 return;
             }
+            var detail = await TryReadMessageAsync(response);
+            var prefix = $"Simply.com API {operation} failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
             throw new HttpRequestException(
-                $"Simply.com API {operation} failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+                string.IsNullOrEmpty(detail) ? prefix : $"{prefix}: {detail}");
+        }
+
+        private static async Task<string?> TryReadMessageAsync(HttpResponseMessage response)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    // Simply error responses are {"error": "..."}.
+                    // The "status" field is hardcoded 200 even on errors,
+                    // so trust the HTTP status code, not the body.
+                    if (doc.RootElement.TryGetProperty("error", out var err) &&
+                        err.ValueKind == JsonValueKind.String)
+                    {
+                        return err.GetString();
+                    }
+                    if (doc.RootElement.TryGetProperty("message", out var msg) &&
+                        msg.ValueKind == JsonValueKind.String)
+                    {
+                        return msg.GetString();
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+            }
+            return null;
         }
 
         private static string EncodeBasicAuth(string account, string apiKey)
