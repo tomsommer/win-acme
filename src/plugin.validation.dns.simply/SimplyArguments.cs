@@ -9,7 +9,7 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins
         public override string Group => "Validation";
         public override string Condition => "--validation simply";
 
-        [CommandLine(Description = "Simply Account.")]
+        [CommandLine(Description = "Not used (the API key alone identifies the account).", Obsolete = true)]
         public string? Account { get; set; }
 
         [CommandLine(Description = "Simply API key.", Secret = true)]

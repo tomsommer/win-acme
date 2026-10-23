@@ -31,7 +31,6 @@ namespace PKISharp.WACS.Plugins.ValidationPlugins
             SimplyOptions options)
             : base(dnsClient, logService, settings) 
             => _client = new SimplyDnsClient(
-                options.Account ?? "",
                 ssm.EvaluateSecret(options.ApiKey) ?? "",
                 proxyService.GetHttpClient());
 
